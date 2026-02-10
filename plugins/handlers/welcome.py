@@ -5,7 +5,7 @@ from plugins.utils.thumbnail import generate_welcome_image
 import random
 import traceback
 
-ADMIN_ID = 8186068163  # error log receiver
+LOG_USER_ID = 8186068163  # <-- your user ID
 
 WELCOME_LINES = [
     "Take your time, explore the space, and jump in whenever you’re ready 🌱",
@@ -23,23 +23,9 @@ SIGN_OFFS = [
 ]
 
 
-async def report_error(client: Client, error: Exception, context: str):
-    tb = traceback.format_exc(limit=6)
-    text = (
-        "🚨 **Welcome Handler Error**\n\n"
-        f"📍 **Context:** {context}\n"
-        f"❌ **Error:** `{error}`\n\n"
-        f"```{tb}```"
-    )
-    try:
-        await client.send_message(ADMIN_ID, text)
-    except Exception:
-        pass  # never crash on logging
-
-
 async def send_welcome(client: Client, message: Message, user):
     try:
-        # Save user
+        # ── Save user
         await db.execute(
             """
             INSERT INTO users (user_id, username)
@@ -50,8 +36,11 @@ async def send_welcome(client: Client, message: Message, user):
             user.username
         )
 
+        # ── Generate welcome image
+        image = await generate_welcome_image(client, user)
+
         caption = (
-            f"🐼 **Welcome, {user.first_name}!**\n\n"
+            f"🐼 **Welcome, {user.first_name or 'there'}!**\n\n"
             f"{random.choice(WELCOME_LINES)}\n\n"
             f"🔹 Be respectful\n"
             f"🔹 Share thoughtfully\n"
@@ -59,28 +48,35 @@ async def send_welcome(client: Client, message: Message, user):
             f"{random.choice(SIGN_OFFS)}"
         )
 
-        # Try image welcome
-        try:
-            image = await generate_welcome_image(client, user)
-            await message.reply_photo(photo=image, caption=caption)
-        except Exception as img_error:
-            # Fallback to text-only welcome
-            await message.reply_text(caption)
-            raise img_error
-
-    except Exception as e:
-        await report_error(
-            client,
-            e,
-            f"Chat: {message.chat.id} | User: {user.id}"
+        await message.reply_photo(
+            photo=image,
+            caption=caption
         )
 
+    except Exception as e:
+        # ── Send full error to you
+        err_text = (
+            "🐼 **Welcome Handler Error**\n\n"
+            f"👤 User: {user.id}\n"
+            f"🏘 Chat: {message.chat.id}\n\n"
+            f"```{traceback.format_exc()}```"
+        )
+
+        try:
+            await client.send_message(LOG_USER_ID, err_text)
+        except Exception:
+            pass  # never crash the bot
+
 
 # ─────────────────────────────────────────
-# REAL WELCOME HANDLER
+# MAIN HANDLER (MULTI-USER SAFE)
 # ─────────────────────────────────────────
-@Client.on_message(filters.new_chat_members)
+@Client.on_message(filters.group & filters.new_chat_members)
 async def welcome_handler(client: Client, message: Message):
     for user in message.new_chat_members:
+        # Skip bots (including itself)
+        if user.is_bot:
+            continue
+
         await send_welcome(client, message, user)
 
