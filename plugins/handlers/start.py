@@ -62,8 +62,8 @@ async def start_private(client: Client, message: Message):
                 )
             ],
             [
-                InlineKeyboardButton("🛠 Support", url="https://t.me/YourSupportChat"),
-                InlineKeyboardButton("🌐 Web", url="https://your-web-dashboard-url.com")
+                InlineKeyboardButton("🛠 Support", url="https://t.me/+99pZe7mYOOQxYTQx"),
+                InlineKeyboardButton("🌐 Web", url="https://hellopanda.onrender.com/")
             ]
         ]
     )
