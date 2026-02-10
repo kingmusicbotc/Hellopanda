@@ -1,0 +1,19 @@
+body {
+  background:#0f0f12;
+  color:#eee;
+  font-family: Inter, sans-serif;
+  text-align:center;
+}
+
+.card {
+  background:#1a1a1f;
+  padding:20px;
+  margin:15px auto;
+  width:300px;
+  border-radius:12px;
+}
+
+footer {
+  opacity:.6;
+  margin-top:40px;
+}
