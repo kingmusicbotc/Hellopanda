@@ -21,3 +21,10 @@ CREATE TABLE IF NOT EXISTS cooldowns (
     user_id BIGINT PRIMARY KEY,
     last_action TIMESTAMPTZ
 );
+
+-- INDEXES
+CREATE TABLE IF NOT EXISTS groups (
+    chat_id BIGINT PRIMARY KEY,
+    title TEXT,
+    added_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
