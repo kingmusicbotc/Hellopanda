@@ -1,0 +1,6 @@
+pyrogram
+tgcrypto
+asyncpg
+flask
+python-dotenv
+pillow
