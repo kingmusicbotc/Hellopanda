@@ -3,7 +3,7 @@ from pyrogram import Client, idle
 from config import Config
 from core.database import connect_db, close_db
 from core.logger import setup_logger
-from web import app as web_app
+from app import app as web_app
 
 logger = setup_logger("HelloPanda")
 
