@@ -1,21 +1,23 @@
+-- USERS TABLE
 CREATE TABLE IF NOT EXISTS users (
-  user_id BIGINT PRIMARY KEY,
-  joined_at TIMESTAMP DEFAULT NOW()
+    user_id BIGINT PRIMARY KEY,
+    username TEXT,
+    reputation_points INTEGER DEFAULT 0,
+    joined_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 
-ALTER TABLE users
-  ADD COLUMN IF NOT EXISTS username TEXT;
-
+-- REPUTATION TABLE
 CREATE TABLE IF NOT EXISTS reputation (
-  id SERIAL PRIMARY KEY,
-  giver BIGINT,
-  receiver BIGINT,
-  value SMALLINT CHECK (value IN (1, -1)),
-  reason TEXT,
-  created_at TIMESTAMP DEFAULT NOW()
+    id SERIAL PRIMARY KEY,
+    giver BIGINT NOT NULL,
+    receiver BIGINT NOT NULL,
+    value SMALLINT CHECK (value IN (1, -1)),
+    reason TEXT,
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 
+-- COOLDOWNS TABLE
 CREATE TABLE IF NOT EXISTS cooldowns (
-  user_id BIGINT PRIMARY KEY,
-  last_action TIMESTAMP
+    user_id BIGINT PRIMARY KEY,
+    last_action TIMESTAMPTZ
 );
