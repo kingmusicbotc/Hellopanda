@@ -2,88 +2,120 @@ import asyncio
 import asyncpg
 from flask import Flask, render_template_string
 from config import Config
-from datetime import datetime
+from datetime import datetime, date
 
 app = Flask(__name__)
 
 # ─────────────────────────────────────────
-# Database helper (SYNC-SAFE)
+# GLOBAL EVENT LOOP + DB POOL
 # ─────────────────────────────────────────
 
-def run_db_query(coro):
-    """
-    Runs async DB code safely inside Flask
-    """
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    try:
-        return loop.run_until_complete(coro)
-    finally:
-        loop.close()
+loop = asyncio.new_event_loop()
+asyncio.set_event_loop(loop)
+db_pool: asyncpg.Pool | None = None
 
 
-async def fetch_stats():
-    conn = await asyncpg.connect(Config.DATABASE_URL)
-    try:
+async def init_db():
+    global db_pool
+    if not db_pool:
+        db_pool = await asyncpg.create_pool(
+            Config.DATABASE_URL,
+            min_size=1,
+            max_size=5
+        )
+
+
+def run(coro):
+    return loop.run_until_complete(coro)
+
+
+# ─────────────────────────────────────────
+# DATA QUERIES
+# ─────────────────────────────────────────
+
+async def fetch_dashboard_data():
+    async with db_pool.acquire() as conn:
         users = await conn.fetchval("SELECT COUNT(*) FROM users")
+
+        new_today = await conn.fetchval(
+            "SELECT COUNT(*) FROM users WHERE joined_at::date = $1",
+            date.today()
+        )
+
         reps_total = await conn.fetchval("SELECT COUNT(*) FROM reputation")
-        reps_pos = await conn.fetchval(
-            "SELECT COUNT(*) FROM reputation WHERE value = 1"
+
+        reps_today = await conn.fetchval(
+            "SELECT COUNT(*) FROM reputation WHERE created_at::date = $1",
+            date.today()
         )
-        reps_neg = await conn.fetchval(
-            "SELECT COUNT(*) FROM reputation WHERE value = -1"
+
+        top_users = await conn.fetch(
+            """
+            SELECT receiver, COUNT(*) AS score
+            FROM reputation
+            WHERE value = 1
+            GROUP BY receiver
+            ORDER BY score DESC
+            LIMIT 5
+            """
         )
-        return users, reps_total, reps_pos, reps_neg
-    finally:
-        await conn.close()
+
+        return {
+            "users": users,
+            "new_today": new_today,
+            "reps_total": reps_total,
+            "reps_today": reps_today,
+            "top_users": top_users
+        }
 
 
 # ─────────────────────────────────────────
-# Dashboard Route
+# ROUTES
 # ─────────────────────────────────────────
 
 @app.route("/")
 def dashboard():
-    users, reps_total, reps_pos, reps_neg = run_db_query(fetch_stats())
+    run(init_db())
+    data = run(fetch_dashboard_data())
 
     return render_template_string(
         DASHBOARD_HTML,
         bot_name=Config.BOT_NAME,
         owner=Config.OWNER_NAME,
-        users=users,
-        reps_total=reps_total,
-        reps_pos=reps_pos,
-        reps_neg=reps_neg,
-        now=datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"),
+        now=datetime.utcnow().strftime("%d %b %Y · %H:%M UTC"),
+        **data
     )
 
 
 # ─────────────────────────────────────────
-# HTML TEMPLATE (INLINE, CLEAN)
+# TEMPLATE
 # ─────────────────────────────────────────
 
 DASHBOARD_HTML = """
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-    <meta charset="UTF-8">
     <title>{{ bot_name }}</title>
     <style>
         body {
             background: #0f0f12;
             color: #eaeaf0;
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif;
-            margin: 0;
+            font-family: Inter, system-ui, sans-serif;
             padding: 40px;
         }
 
         h1 {
-            font-size: 32px;
-            margin-bottom: 5px;
+            font-size: 36px;
+            margin-bottom: 6px;
         }
 
-        .subtitle {
-            opacity: 0.6;
+        .status {
+            display: inline-block;
+            background: #1e2b1e;
+            color: #7CFF9A;
+            padding: 6px 14px;
+            border-radius: 999px;
+            font-size: 13px;
             margin-bottom: 30px;
         }
 
@@ -95,57 +127,91 @@ DASHBOARD_HTML = """
 
         .card {
             background: #16161d;
-            border-radius: 14px;
-            padding: 20px;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.25);
+            border-radius: 16px;
+            padding: 22px;
         }
 
         .card span {
             opacity: 0.6;
-            font-size: 14px;
+            font-size: 13px;
         }
 
         .card strong {
             display: block;
-            font-size: 28px;
+            font-size: 30px;
             margin-top: 8px;
         }
 
-        footer {
+        .section {
             margin-top: 50px;
+        }
+
+        ul {
+            list-style: none;
+            padding: 0;
+        }
+
+        li {
+            background: #16161d;
+            padding: 14px 18px;
+            border-radius: 12px;
+            margin-bottom: 10px;
+            display: flex;
+            justify-content: space-between;
+        }
+
+        footer {
+            margin-top: 60px;
+            text-align: center;
             opacity: 0.5;
             font-size: 13px;
-            text-align: center;
         }
     </style>
 </head>
+
 <body>
 
     <h1>🐼 {{ bot_name }}</h1>
+    <div class="status">● Online</div>
+
     <div class="subtitle">
         Designed by {{ owner }} · Updated {{ now }}
     </div>
 
     <div class="grid">
         <div class="card">
-            <span>👥 Total Users</span>
+            <span>Total Users</span>
             <strong>{{ users }}</strong>
         </div>
 
         <div class="card">
-            <span>➕➖ Total Reputation</span>
+            <span>New Today</span>
+            <strong>{{ new_today }}</strong>
+        </div>
+
+        <div class="card">
+            <span>Total Reputation</span>
             <strong>{{ reps_total }}</strong>
         </div>
 
         <div class="card">
-            <span>➕ Positive</span>
-            <strong>{{ reps_pos }}</strong>
+            <span>Reputation Today</span>
+            <strong>{{ reps_today }}</strong>
         </div>
+    </div>
 
-        <div class="card">
-            <span>➖ Negative</span>
-            <strong>{{ reps_neg }}</strong>
-        </div>
+    <div class="section">
+        <h2>🌟 Top Appreciated Members</h2>
+        <ul>
+            {% for row in top_users %}
+            <li>
+                <span>User ID {{ row.receiver }}</span>
+                <strong>+{{ row.score }}</strong>
+            </li>
+            {% else %}
+            <li>No data yet</li>
+            {% endfor %}
+        </ul>
     </div>
 
     <footer>
@@ -156,14 +222,9 @@ DASHBOARD_HTML = """
 </html>
 """
 
-
 # ─────────────────────────────────────────
-# Run Server
+# RUN
 # ─────────────────────────────────────────
 
 if __name__ == "__main__":
-    app.run(
-        host="0.0.0.0",
-        port=8000,
-        debug=True
-    )
+    app.run(host="0.0.0.0", port=8000)
