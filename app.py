@@ -1,136 +1,122 @@
-from quart import Quart, render_template_string
+from flask import Flask, render_template_string
 from config import Config
 from datetime import datetime, date, timedelta
 import psycopg
 import time
-import asyncio
 
-app = Quart(__name__)
+app = Flask(__name__)
 START_TIME = time.time()
 
 # ─────────────────────────────────────────
-# DB CONNECTION (sync, but isolated)
+# DB CONNECTION
 # ─────────────────────────────────────────
 
 def get_conn():
     return psycopg.connect(Config.DATABASE_URL, autocommit=True)
 
 # ─────────────────────────────────────────
-# CACHE (async-safe)
+# CACHE
 # ─────────────────────────────────────────
 
 CACHE = {}
 CACHE_TTL = 2.0
 
-async def cached(key, fetcher):
+def cached(key, fetcher):
     now = time.time()
-
     if key in CACHE:
         value, ts = CACHE[key]
         if now - ts < CACHE_TTL:
             return value, True
-
-    value = await fetcher()
+    value = fetcher()
     CACHE[key] = (value, now)
     return value, False
 
 # ─────────────────────────────────────────
-# DATA FETCH (run sync DB in thread)
+# DATA FETCH
 # ─────────────────────────────────────────
 
-async def fetch_dashboard_data():
+def fetch_dashboard_data():
     t0 = time.time()
 
-    def query():
-        with get_conn() as conn:
-            with conn.cursor() as cur:
-                cur.execute("SELECT COUNT(*) FROM users")
-                users = cur.fetchone()[0]
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) FROM users")
+            users = cur.fetchone()[0]
 
-                cur.execute(
-                    "SELECT COUNT(*) FROM users WHERE joined_at::date = %s",
-                    (date.today(),)
-                )
-                new_today = cur.fetchone()[0]
+            cur.execute("SELECT COUNT(*) FROM users WHERE joined_at::date = %s", (date.today(),))
+            new_today = cur.fetchone()[0]
 
-                cur.execute(
-                    "SELECT COUNT(*) FROM users WHERE joined_at >= %s",
-                    (date.today() - timedelta(days=7),)
-                )
-                new_week = cur.fetchone()[0]
+            cur.execute("SELECT COUNT(*) FROM users WHERE joined_at >= %s", (date.today() - timedelta(days=7),))
+            new_week = cur.fetchone()[0]
 
-                cur.execute("SELECT COUNT(*) FROM reputation")
-                reps_total = cur.fetchone()[0]
+            cur.execute("SELECT COUNT(*) FROM reputation")
+            reps_total = cur.fetchone()[0]
 
-                cur.execute(
-                    "SELECT COUNT(*) FROM reputation WHERE created_at::date = %s",
-                    (date.today(),)
-                )
-                reps_today = cur.fetchone()[0]
+            cur.execute("SELECT COUNT(*) FROM reputation WHERE created_at::date = %s", (date.today(),))
+            reps_today = cur.fetchone()[0]
 
-                cur.execute(
-                    "SELECT COUNT(*) FROM reputation WHERE created_at >= %s",
-                    (date.today() - timedelta(days=7),)
-                )
-                reps_week = cur.fetchone()[0]
+            cur.execute("SELECT COUNT(*) FROM reputation WHERE created_at >= %s", (date.today() - timedelta(days=7),))
+            reps_week = cur.fetchone()[0]
 
-                cur.execute("""
-                    SELECT u.user_id, u.username, COUNT(r.id)
-                    FROM reputation r
-                    JOIN users u ON u.user_id = r.receiver
-                    WHERE r.value = 1
-                    GROUP BY u.user_id, u.username
-                    ORDER BY COUNT(r.id) DESC
-                    LIMIT 5
-                """)
-                top_users = cur.fetchall()
+            cur.execute("""
+                SELECT
+                    u.user_id,
+                    u.username,
+                    COUNT(r.id) AS score
+                FROM reputation r
+                JOIN users u ON u.user_id = r.receiver
+                WHERE r.value = 1
+                GROUP BY u.user_id, u.username
+                ORDER BY score DESC
+                LIMIT 5
+            """)
+            top_users = cur.fetchall()
 
-                cur.execute("""
-                    SELECT user_id, username, joined_at
-                    FROM users
-                    ORDER BY joined_at DESC
-                    LIMIT 5
-                """)
-                recent_joins = cur.fetchall()
+            cur.execute("""
+                SELECT user_id, username, joined_at
+                FROM users
+                ORDER BY joined_at DESC
+                LIMIT 5
+            """)
+            recent_joins = cur.fetchall()
 
-                cur.execute("""
-                    SELECT
-                        g.user_id, g.username,
-                        rcv.user_id, rcv.username,
-                        r.value
-                    FROM reputation r
-                    JOIN users g ON g.user_id = r.giver
-                    JOIN users rcv ON rcv.user_id = r.receiver
-                    ORDER BY r.created_at DESC
-                    LIMIT 5
-                """)
-                recent_reps = cur.fetchall()
+            cur.execute("""
+                SELECT
+                    g.user_id, g.username,
+                    rcv.user_id, rcv.username,
+                    r.value
+                FROM reputation r
+                JOIN users g ON g.user_id = r.giver
+                JOIN users rcv ON rcv.user_id = r.receiver
+                ORDER BY r.created_at DESC
+                LIMIT 5
+            """)
+            recent_reps = cur.fetchall()
 
-        return {
-            "users": users,
-            "new_today": new_today,
-            "new_week": new_week,
-            "reps_total": reps_total,
-            "reps_today": reps_today,
-            "reps_week": reps_week,
-            "top_users": top_users,
-            "recent_joins": recent_joins,
-            "recent_reps": recent_reps,
-            "query_ms": int((time.time() - t0) * 1000),
-        }
-
-    return await asyncio.to_thread(query)
+    return {
+        "users": users,
+        "new_today": new_today,
+        "new_week": new_week,
+        "reps_total": reps_total,
+        "reps_today": reps_today,
+        "reps_week": reps_week,
+        "top_users": top_users,
+        "recent_joins": recent_joins,
+        "recent_reps": recent_reps,
+        "query_ms": int((time.time() - t0) * 1000)
+    }
 
 # ─────────────────────────────────────────
 # ROUTE
 # ─────────────────────────────────────────
 
 @app.route("/")
-async def dashboard():
-    data, cache_hit = await cached("dashboard", fetch_dashboard_data)
+def dashboard():
+    data, cache_hit = cached("dashboard", fetch_dashboard_data)
+
     uptime = int(time.time() - START_TIME)
 
-    return await render_template_string(
+    return render_template_string(
         DASHBOARD_HTML,
         bot_name=Config.BOT_NAME,
         owner=Config.OWNER_NAME,
@@ -141,10 +127,11 @@ async def dashboard():
     )
 
 # ─────────────────────────────────────────
-# TEMPLATE (unchanged)
+# TEMPLATE
 # ─────────────────────────────────────────
 
-DASHBOARD_HTML = """<!DOCTYPE html>
+DASHBOARD_HTML = """
+<!DOCTYPE html>
 <html>
 <head>
 <title>{{ bot_name }}</title>
@@ -182,7 +169,7 @@ footer { margin-top:60px; text-align:center; opacity:.5; font-size:13px; }
 <h2>🌟 Top Appreciated</h2>
 <ul>
 {% for u in top_users %}
-<li><span>User {{ u[0] }}</span><strong>+{{ u[2] }}</strong></li>
+<li><span>User {{ u[0] }}</span><strong>+{{ u[1] }}</strong></li>
 {% else %}<li>No data</li>{% endfor %}
 </ul>
 </div>
@@ -194,7 +181,7 @@ footer { margin-top:60px; text-align:center; opacity:.5; font-size:13px; }
 <li><span>User {{ j[0] }}</span><span>Joined</span></li>
 {% endfor %}
 {% for r in recent_reps %}
-<li><span>{{ r[0] }} → {{ r[2] }}</span><span>{{ "+" if r[4] == 1 else "-" }}</span></li>
+<li><span>{{ r[0] }} → {{ r[1] }}</span><span>{% if r[2]==1 %}+{% else %}-{% endif %}</span></li>
 {% endfor %}
 </ul>
 </div>
@@ -205,4 +192,14 @@ Hello Panda · Calm communities, clear signals 🐾
 </footer>
 
 </body>
-</html>"""
+</html>
+"""
+
+# ─────────────────────────────────────────
+# RUN
+# ─────────────────────────────────────────
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=8000)
+
+fu;ll fix give 
